@@ -2,11 +2,11 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth, signOut } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc } from 'firebase/firestore';
 import RapidMarkingModal from './components/RapidMarkingModal';
 import LoginModal from './components/LoginModal';
 import GroupManagementModal from './components/GroupManagementModal';
-import { exportAttendanceToExcel } from './utils/excelExport';
+import ExcelExportModal from './components/ExcelExportModal';
 import { 
   Calendar, 
   Download, 
@@ -22,8 +22,7 @@ import {
   Layers,
   LogOut,
   FolderCog,
-  ShieldCheck,
-  User
+  ShieldCheck
 } from 'lucide-react';
 
 export default function App() {
@@ -36,6 +35,7 @@ export default function App() {
   const [students, setStudents] = useState([]);
   const [groups, setGroups] = useState([]);
   const [attendance, setAttendance] = useState({});
+  const [allAttendanceData, setAllAttendanceData] = useState({});
   
   const [selectedDate, setSelectedDate] = useState(() => {
     const today = new Date();
@@ -50,6 +50,7 @@ export default function App() {
     title: 'All Students'
   });
   const [isGroupManagerOpen, setIsGroupManagerOpen] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Listen to Firebase Auth state
@@ -101,19 +102,20 @@ export default function App() {
     return () => unsubStudents();
   }, [user]);
 
-  // Fetch User Attendance Records for Selected Date
+  // Fetch ALL Attendance Records for range export & current date
   useEffect(() => {
     if (!user) return;
 
-    const unsubAttendance = onSnapshot(doc(db, 'users', user.uid, 'attendance', selectedDate), (docSnap) => {
-      if (docSnap.exists()) {
-        setAttendance(docSnap.data().records || {});
-      } else {
-        setAttendance({});
-      }
+    const unsubAllAttendance = onSnapshot(collection(db, 'users', user.uid, 'attendance'), (snapshot) => {
+      const history = {};
+      snapshot.docs.forEach(docSnap => {
+        history[docSnap.id] = docSnap.data().records || {};
+      });
+      setAllAttendanceData(history);
+      setAttendance(history[selectedDate] || {});
     });
 
-    return () => unsubAttendance();
+    return () => unsubAllAttendance();
   }, [user, selectedDate]);
 
   // Compute Group Analytics
@@ -185,67 +187,77 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 pb-16 font-sans">
+    <div className="min-h-screen w-full max-w-full bg-slate-950 text-slate-100 pb-16 font-sans overflow-x-hidden">
       
-      {/* Top Header */}
-      <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 shadow-xl">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between gap-4">
+      {/* Top Navigation Bar */}
+      <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 shadow-xl">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
           
-          {/* Logo & User Info */}
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-2xl shadow-lg shadow-indigo-500/20 text-white shrink-0">
-              <Users className="w-5 h-5 stroke-[2.5]" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base sm:text-lg font-black text-white tracking-tight leading-none">TA Attendance Hub</h1>
-                <span className="text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
-                  <ShieldCheck className="w-3 h-3 text-indigo-400" /> IIITD Verified
-                </span>
+          {/* Logo & User Badge */}
+          <div className="flex items-center justify-between sm:justify-start gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-2xl shadow-lg shadow-indigo-500/20 text-white shrink-0">
+                <Users className="w-5 h-5 stroke-[2.5]" />
               </div>
-              <p className="text-[11px] text-slate-400 font-medium truncate max-w-[200px] sm:max-w-xs mt-0.5">
-                {user.email}
-              </p>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <h1 className="text-base sm:text-lg font-black text-white tracking-tight leading-none">TA Attendance Hub</h1>
+                  <span className="text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-indigo-400" /> IIITD
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-medium truncate max-w-[180px] sm:max-w-xs mt-0.5">
+                  {user.email}
+                </p>
+              </div>
             </div>
+
+            {/* Logout on Mobile */}
+            <button
+              onClick={handleLogout}
+              className="sm:hidden p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition"
+              title="Sign Out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
 
-          {/* Header Controls */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          {/* Controls Cluster */}
+          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2">
             
-            {/* Manage Groups Modal Trigger */}
+            {/* Manage Groups */}
             <button
               onClick={() => setIsGroupManagerOpen(true)}
-              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-indigo-300 font-bold text-xs sm:text-sm px-3 py-2 rounded-xl transition border border-slate-700 active:scale-95"
-              title="Manage Groups & Students"
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-indigo-300 font-bold text-xs sm:text-sm px-3 py-2 rounded-xl transition border border-slate-700 active:scale-95"
             >
-              <FolderCog className="w-4 h-4 text-indigo-400" />
-              <span className="hidden md:inline">Manage</span> Groups
+              <FolderCog className="w-4 h-4 text-indigo-400 shrink-0" />
+              <span>Groups</span>
             </button>
 
             {/* Date Selector */}
-            <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700 hover:border-indigo-500/50 px-2.5 sm:px-3 py-1.5 rounded-xl transition">
+            <div className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 bg-slate-800/80 border border-slate-700 hover:border-indigo-500/50 px-2.5 py-1.5 rounded-xl transition min-w-[130px]">
               <Calendar className="w-4 h-4 text-indigo-400 shrink-0" />
               <input
                 type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                className="bg-transparent text-xs sm:text-sm font-semibold text-slate-200 focus:outline-none cursor-pointer"
+                className="bg-transparent text-xs sm:text-sm font-semibold text-slate-200 focus:outline-none cursor-pointer w-full"
               />
             </div>
 
             {/* Excel Export */}
             <button
-              onClick={() => exportAttendanceToExcel(students, attendance, selectedDate)}
-              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm px-3.5 py-2 rounded-xl transition shadow-lg shadow-emerald-600/20 active:scale-95"
+              onClick={() => setIsExportModalOpen(true)}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm px-3 py-2 rounded-xl transition shadow-lg shadow-emerald-600/20 active:scale-95"
             >
-              <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">Export</span> Excel
+              <Download className="w-4 h-4 shrink-0" />
+              <span>Excel Export</span>
             </button>
 
-            {/* Logout */}
+            {/* Desktop Logout */}
             <button
               onClick={handleLogout}
-              className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition"
+              className="hidden sm:block p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition"
               title="Sign Out"
             >
               <LogOut className="w-4 h-4" />
@@ -256,20 +268,20 @@ export default function App() {
       </header>
 
       {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8">
+      <main className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-5 space-y-6">
         
         {/* Banner Section */}
-        <div className="relative overflow-hidden bg-gradient-to-r from-indigo-900/80 via-slate-900 to-violet-950/80 border border-indigo-500/20 rounded-3xl p-6 sm:p-8 shadow-2xl">
-          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="relative overflow-hidden bg-gradient-to-r from-indigo-900/80 via-slate-900 to-violet-950/80 border border-indigo-500/20 rounded-3xl p-5 sm:p-8 shadow-2xl">
+          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-5">
             <div className="space-y-2 max-w-xl">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-xs font-bold uppercase tracking-widest">
                 <Sparkles className="w-3.5 h-3.5" /> Dashboard • {user.displayName || user.email.split('@')[0]}
               </span>
-              <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+              <h2 className="text-xl sm:text-3xl font-black text-white tracking-tight">
                 Attendance for {new Date(selectedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
               </h2>
               <p className="text-slate-300 text-xs sm:text-sm leading-relaxed">
-                Single-card rapid marking and live analytics. Data is safely stored and tied to your IIITD Google account.
+                Single-card rapid marking, date-range Excel reporting, and live group analytics.
               </p>
             </div>
 
@@ -278,7 +290,7 @@ export default function App() {
               <button
                 onClick={() => handleOpenMarking('all', `All ${students.length} Students`)}
                 disabled={students.length === 0}
-                className="flex items-center justify-center gap-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-xl shadow-indigo-600/30 active:scale-95 transition disabled:opacity-50"
+                className="w-full sm:w-auto flex items-center justify-center gap-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-xl shadow-indigo-600/30 active:scale-95 transition disabled:opacity-50"
               >
                 <Play className="w-4 h-4 fill-white" />
                 Mark All Students ({students.length})
@@ -290,71 +302,71 @@ export default function App() {
         </div>
 
         {/* Global Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400">
               <span className="text-xs font-bold uppercase tracking-wider">Total</span>
               <Users className="w-4 h-4 text-slate-400" />
             </div>
-            <div className="mt-3">
-              <p className="text-2xl sm:text-3xl font-black text-white">{totalStudents}</p>
-              <p className="text-[11px] text-slate-400 font-medium">Across {groups.length} Groups</p>
+            <div className="mt-2.5">
+              <p className="text-xl sm:text-3xl font-black text-white">{totalStudents}</p>
+              <p className="text-[10px] sm:text-[11px] text-slate-400 font-medium">{groups.length} Groups</p>
             </div>
           </div>
 
-          <div className="bg-slate-900/80 border border-emerald-500/20 rounded-2xl p-4 flex flex-col justify-between">
+          <div className="bg-slate-900/80 border border-emerald-500/20 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between">
             <div className="flex items-center justify-between text-emerald-400">
               <span className="text-xs font-bold uppercase tracking-wider">Present</span>
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             </div>
-            <div className="mt-3">
-              <p className="text-2xl sm:text-3xl font-black text-emerald-400">{totalPresent}</p>
-              <p className="text-[11px] text-emerald-500/80 font-semibold">{overallPercentage}% Rate</p>
+            <div className="mt-2.5">
+              <p className="text-xl sm:text-3xl font-black text-emerald-400">{totalPresent}</p>
+              <p className="text-[10px] sm:text-[11px] text-emerald-500/80 font-semibold">{overallPercentage}% Rate</p>
             </div>
           </div>
 
-          <div className="bg-slate-900/80 border border-rose-500/20 rounded-2xl p-4 flex flex-col justify-between">
+          <div className="bg-slate-900/80 border border-rose-500/20 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between">
             <div className="flex items-center justify-between text-rose-400">
               <span className="text-xs font-bold uppercase tracking-wider">Absent</span>
               <XCircle className="w-4 h-4 text-rose-400" />
             </div>
-            <div className="mt-3">
-              <p className="text-2xl sm:text-3xl font-black text-rose-400">{totalAbsent}</p>
-              <p className="text-[11px] text-rose-500/80 font-semibold">{totalStudents ? Math.round((totalAbsent/totalStudents)*100) : 0}% Rate</p>
+            <div className="mt-2.5">
+              <p className="text-xl sm:text-3xl font-black text-rose-400">{totalAbsent}</p>
+              <p className="text-[10px] sm:text-[11px] text-rose-500/80 font-semibold">{totalStudents ? Math.round((totalAbsent/totalStudents)*100) : 0}% Rate</p>
             </div>
           </div>
 
-          <div className="bg-slate-900/80 border border-amber-500/20 rounded-2xl p-4 flex flex-col justify-between">
+          <div className="bg-slate-900/80 border border-amber-500/20 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between">
             <div className="flex items-center justify-between text-amber-400">
-              <span className="text-xs font-bold uppercase tracking-wider">Mark Later</span>
+              <span className="text-xs font-bold uppercase tracking-wider">Later</span>
               <Clock className="w-4 h-4 text-amber-400" />
             </div>
-            <div className="mt-3">
-              <p className="text-2xl sm:text-3xl font-black text-amber-400">{totalPending}</p>
-              <p className="text-[11px] text-amber-500/80 font-medium">Pending Review</p>
+            <div className="mt-2.5">
+              <p className="text-xl sm:text-3xl font-black text-amber-400">{totalPending}</p>
+              <p className="text-[10px] sm:text-[11px] text-amber-500/80 font-medium">Pending</p>
             </div>
           </div>
 
-          <div className="col-span-2 md:col-span-1 bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
+          <div className="col-span-2 md:col-span-1 bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400">
               <span className="text-xs font-bold uppercase tracking-wider">Unmarked</span>
               <Layers className="w-4 h-4 text-slate-400" />
             </div>
-            <div className="mt-3">
-              <p className="text-2xl sm:text-3xl font-black text-slate-300">{totalUnmarked}</p>
-              <p className="text-[11px] text-slate-500 font-medium">Remaining</p>
+            <div className="mt-2.5">
+              <p className="text-xl sm:text-3xl font-black text-slate-300">{totalUnmarked}</p>
+              <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">Remaining</p>
             </div>
           </div>
 
         </div>
 
         {/* SECTION 1: Groups Analytics Grid */}
-        <section className="space-y-4">
+        <section className="space-y-3.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <BarChart3 className="w-5 h-5 text-indigo-400" />
-              <h2 className="text-lg font-extrabold text-white">Groups & Analytics</h2>
+              <h2 className="text-base sm:text-lg font-extrabold text-white">Groups & Analytics</h2>
             </div>
             <button 
               onClick={() => setIsGroupManagerOpen(true)}
@@ -375,27 +387,27 @@ export default function App() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
               {groupStats.map((g) => (
                 <div 
                   key={g.groupId}
-                  className="bg-slate-900 border border-slate-800 hover:border-indigo-500/50 rounded-2xl p-5 shadow-lg flex flex-col justify-between space-y-4 transition duration-200 group"
+                  className="bg-slate-900 border border-slate-800 hover:border-indigo-500/50 rounded-2xl p-4 sm:p-5 shadow-lg flex flex-col justify-between space-y-4 transition duration-200 group"
                 >
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-bold text-white group-hover:text-indigo-400 transition">
+                        <h3 className="text-base sm:text-lg font-bold text-white group-hover:text-indigo-400 transition">
                           Group {g.groupId}
                         </h3>
-                        <span className="text-[11px] font-bold bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full border border-slate-700">
+                        <span className="text-[10px] sm:text-[11px] font-bold bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full border border-slate-700">
                           {g.total} Students
                         </span>
                       </div>
                     </div>
 
                     <div className="text-right">
-                      <span className="text-xl font-black text-indigo-400">{g.percentage}%</span>
-                      <p className="text-[10px] uppercase font-extrabold text-slate-500">Present</p>
+                      <span className="text-lg sm:text-xl font-black text-indigo-400">{g.percentage}%</span>
+                      <p className="text-[9px] sm:text-[10px] uppercase font-extrabold text-slate-500">Present</p>
                     </div>
                   </div>
 
@@ -406,7 +418,7 @@ export default function App() {
                       <div className="bg-amber-500 h-full" style={{ width: `${g.total ? (g.pending / g.total) * 100 : 0}%` }} title="Mark Later" />
                     </div>
                     
-                    <div className="flex items-center justify-between text-[11px] font-medium pt-1">
+                    <div className="flex items-center justify-between text-[10px] sm:text-[11px] font-medium pt-1">
                       <span className="text-emerald-400">{g.present} Present</span>
                       <span className="text-rose-400">{g.absent} Absent</span>
                       <span className="text-amber-400">{g.pending} Later</span>
@@ -414,7 +426,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="pt-2 flex items-center gap-2">
+                  <div className="pt-1 flex items-center gap-2">
                     <button
                       onClick={() => handleOpenMarking(g.groupId, `Group ${g.groupId}`)}
                       disabled={g.total === 0}
@@ -445,17 +457,17 @@ export default function App() {
           
           <div className="p-4 sm:p-6 bg-slate-900 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
                 <Users className="w-5 h-5 text-indigo-400" />
                 Student Roster 
                 <span className="text-xs font-normal text-slate-400">({displayedStudents.length} Students)</span>
               </h2>
             </div>
 
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
               <button
                 onClick={() => setActiveGroupFilter('all')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition shrink-0 ${
                   activeGroupFilter === 'all' 
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' 
                     : 'bg-slate-800 text-slate-400 hover:text-white border border-slate-700'
@@ -467,7 +479,7 @@ export default function App() {
                 <button
                   key={gNum}
                   onClick={() => setActiveGroupFilter(gNum)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${
+                  className={`px-3 py-1 rounded-xl text-xs font-bold transition shrink-0 ${
                     activeGroupFilter === gNum 
                       ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' 
                       : 'bg-slate-800 text-slate-400 hover:text-white border border-slate-700'
@@ -479,7 +491,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="p-4 border-b border-slate-800/80 bg-slate-950/40">
+          <div className="p-3.5 border-b border-slate-800/80 bg-slate-950/40">
             <div className="relative max-w-md">
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
               <input
@@ -503,36 +515,36 @@ export default function App() {
                 return (
                   <div 
                     key={student.id} 
-                    className="p-4 hover:bg-slate-800/40 transition flex items-center justify-between gap-4"
+                    className="p-3.5 sm:p-4 hover:bg-slate-800/40 transition flex items-center justify-between gap-3"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-slate-800 text-indigo-300 font-bold text-xs flex items-center justify-center border border-slate-700">
+                      <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-slate-800 text-indigo-300 font-bold text-xs flex items-center justify-center border border-slate-700 shrink-0">
                         G{student.groupId}
                       </div>
-                      <div>
-                        <p className="font-bold text-sm text-slate-200">{student.name}</p>
-                        <p className="text-[11px] text-slate-500 font-mono">ID: {student.id}</p>
+                      <div className="min-w-0">
+                        <p className="font-bold text-xs sm:text-sm text-slate-200 truncate">{student.name}</p>
+                        <p className="text-[10px] text-slate-500 font-mono truncate">ID: {student.id}</p>
                       </div>
                     </div>
 
-                    <div>
+                    <div className="shrink-0">
                       {status === 'present' && (
-                        <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-bold rounded-xl border border-emerald-500/20 inline-flex items-center gap-1.5">
+                        <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 text-[11px] sm:text-xs font-bold rounded-xl border border-emerald-500/20 inline-flex items-center gap-1.5">
                           <CheckCircle2 className="w-3.5 h-3.5" /> Present
                         </span>
                       )}
                       {status === 'absent' && (
-                        <span className="px-3 py-1 bg-rose-500/10 text-rose-400 text-xs font-bold rounded-xl border border-rose-500/20 inline-flex items-center gap-1.5">
+                        <span className="px-2.5 py-1 bg-rose-500/10 text-rose-400 text-[11px] sm:text-xs font-bold rounded-xl border border-rose-500/20 inline-flex items-center gap-1.5">
                           <XCircle className="w-3.5 h-3.5" /> Absent
                         </span>
                       )}
                       {status === 'pending' && (
-                        <span className="px-3 py-1 bg-amber-500/10 text-amber-400 text-xs font-bold rounded-xl border border-amber-500/20 inline-flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5" /> Mark Later
+                        <span className="px-2.5 py-1 bg-amber-500/10 text-amber-400 text-[11px] sm:text-xs font-bold rounded-xl border border-amber-500/20 inline-flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5" /> Later
                         </span>
                       )}
                       {!status && (
-                        <span className="px-3 py-1 bg-slate-800 text-slate-500 text-xs font-semibold rounded-xl border border-slate-700">
+                        <span className="px-2.5 py-1 bg-slate-800 text-slate-500 text-[11px] sm:text-xs font-semibold rounded-xl border border-slate-700">
                           Unmarked
                         </span>
                       )}
@@ -566,6 +578,16 @@ export default function App() {
           groups={groups}
           students={students}
           onClose={() => setIsGroupManagerOpen(false)}
+        />
+      )}
+
+      {/* Date Range Excel Export Modal */}
+      {isExportModalOpen && (
+        <ExcelExportModal
+          students={students}
+          allAttendanceData={allAttendanceData}
+          currentDate={selectedDate}
+          onClose={() => setIsExportModalOpen(false)}
         />
       )}
 
