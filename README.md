@@ -122,6 +122,7 @@ Please follow existing code style and add tests where applicable.
 
 ## Changelog (high level)
 - v1.2 — Added selected-dates Excel export and related UI improvements
+- v1.1 - added excel download feature for ranged dates and mobile dynamic view
 
 ## License
 Specify a license, e.g. MIT. Add a LICENSE file at the repo root.
