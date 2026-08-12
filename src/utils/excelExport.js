@@ -2,23 +2,54 @@
 import * as XLSX from 'xlsx';
 
 /**
- * Export single date or multi-date range attendance records into Excel
+ * Export single date, date range, or multiple custom selected dates attendance records into Excel
  * @param {Array} students - List of student objects
  * @param {Object} attendanceByDate - Mapping of date string -> { records: { studentId: status } }
- * @param {String} startDate - Start date YYYY-MM-DD
- * @param {String} endDate - End date YYYY-MM-DD (optional)
+ * @param {String|Array} dateOrDates - Single date string (YYYY-MM-DD) OR Array of date strings [YYYY-MM-DD, ...]
+ * @param {String} endDate - End date YYYY-MM-DD (optional, for continuous date range)
  */
-export const exportAttendanceToExcel = (students, attendanceByDate, startDate, endDate = null) => {
+export const exportAttendanceToExcel = (students, attendanceByDate, dateOrDates, endDate = null) => {
     if (!students || students.length === 0) {
         alert("No students available to export.");
         return;
     }
 
-    const isRange = endDate && endDate !== startDate;
+    // Determine target dates list
+    let targetDates = [];
+    let isSingle = false;
 
-    if (!isRange) {
-        // Single Date Export
-        const dateRecords = attendanceByDate[startDate] || {};
+    if (Array.isArray(dateOrDates)) {
+        // Option 3: Multiple Custom Selected Dates
+        targetDates = [...dateOrDates].sort();
+        if (targetDates.length === 1) {
+            isSingle = true;
+        }
+    } else if (endDate && endDate !== dateOrDates) {
+        // Option 2: Continuous Date Range
+        const start = dateOrDates;
+        const end = endDate;
+        targetDates = Object.keys(attendanceByDate)
+            .filter(d => d >= start && d <= end)
+            .sort();
+
+        if (targetDates.length === 0) {
+            targetDates.push(start);
+            if (start !== end) targetDates.push(end);
+        }
+    } else {
+        // Option 1: Single Date
+        isSingle = true;
+        targetDates = [dateOrDates];
+    }
+
+    if (targetDates.length === 0) {
+        alert("No dates selected for export.");
+        return;
+    }
+
+    if (isSingle) {
+        const singleDate = targetDates[0];
+        const dateRecords = attendanceByDate[singleDate] || {};
         const rows = students.map((student) => {
             const status = dateRecords[student.id] || 'unmarked';
             return {
@@ -26,27 +57,16 @@ export const exportAttendanceToExcel = (students, attendanceByDate, startDate, e
                 'Student Name': student.name,
                 'Group Number': `Group ${student.groupId}`,
                 'Attendance Status': status.toUpperCase(),
-                'Date': startDate
+                'Date': singleDate
             };
         });
 
         const worksheet = XLSX.utils.json_to_sheet(rows);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance');
-        XLSX.writeFile(workbook, `Attendance_${startDate}.xlsx`);
+        XLSX.writeFile(workbook, `Attendance_${singleDate}.xlsx`);
     } else {
-        // Multi-Date Range Export (Pivot Table Style + Master Log)
-        const dateKeys = Object.keys(attendanceByDate)
-            .filter(d => d >= startDate && d <= endDate)
-            .sort();
-
-        if (dateKeys.length === 0) {
-            // Include start and end dates even if empty
-            dateKeys.push(startDate);
-            if (startDate !== endDate) dateKeys.push(endDate);
-        }
-
-        // Sheet 1: Matrix Summary (Rows: Students, Columns: Dates)
+        // Multi-Date Export (Matrix Summary + Detailed Log)
         const summaryRows = students.map(student => {
             const row = {
                 'Student ID': student.id,
@@ -55,9 +75,9 @@ export const exportAttendanceToExcel = (students, attendanceByDate, startDate, e
             };
 
             let presentCount = 0;
-            let totalCount = dateKeys.length;
+            let totalCount = targetDates.length;
 
-            dateKeys.forEach(date => {
+            targetDates.forEach(date => {
                 const status = (attendanceByDate[date] && attendanceByDate[date][student.id]) || 'unmarked';
                 row[date] = status.toUpperCase();
                 if (status === 'present') presentCount++;
@@ -68,9 +88,9 @@ export const exportAttendanceToExcel = (students, attendanceByDate, startDate, e
             return row;
         });
 
-        // Sheet 2: Flat Log Records
+        // Flat Log Records
         const flatRows = [];
-        dateKeys.forEach(date => {
+        targetDates.forEach(date => {
             const records = attendanceByDate[date] || {};
             students.forEach(student => {
                 const status = records[student.id] || 'unmarked';
@@ -87,11 +107,15 @@ export const exportAttendanceToExcel = (students, attendanceByDate, startDate, e
         const workbook = XLSX.utils.book_new();
         
         const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
-        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Range Summary');
+        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Selected Dates Summary');
 
         const logSheet = XLSX.utils.json_to_sheet(flatRows);
         XLSX.utils.book_append_sheet(workbook, logSheet, 'Detailed Log');
 
-        XLSX.writeFile(workbook, `Attendance_Report_${startDate}_to_${endDate}.xlsx`);
+        const fileName = Array.isArray(dateOrDates)
+            ? `Attendance_Selected_Dates_${targetDates.length}_days.xlsx`
+            : `Attendance_Report_${dateOrDates}_to_${endDate}.xlsx`;
+
+        XLSX.writeFile(workbook, fileName);
     }
 };
